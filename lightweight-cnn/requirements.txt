@@ -1,0 +1,7 @@
+torch
+torchvision
+torchmetrics
+requests
+numpy<2.0
+matplotlib
+Pillow 
