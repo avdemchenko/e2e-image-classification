@@ -17,6 +17,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms
+from torch.utils.tensorboard import SummaryWriter
 
 from torchmetrics.classification import (
     MulticlassAccuracy,
@@ -278,6 +279,12 @@ def get_args():
         default="./checkpoints",
         help="Directory for saving checkpoints",
     )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default="./runs",
+        help="TensorBoard log directory",
+    )
     return parser.parse_args()
 
 
@@ -288,6 +295,7 @@ def get_args():
 def main():
     args = get_args()
     set_seed(args.seed)
+    writer = SummaryWriter(log_dir=args.log_dir)
 
     # Step 1: Ensure data is present
     download_and_unpack_cifar10()
@@ -379,6 +387,13 @@ def main():
         history["val_f1"].append(val_metrics["f1"])
         history["lr"].append(current_lr)
 
+        # TensorBoard logging
+        writer.add_scalar("Loss/train", train_loss, epoch)
+        writer.add_scalar("Loss/val", val_loss, epoch)
+        writer.add_scalar("Accuracy/val", val_metrics["accuracy"], epoch)
+        writer.add_scalar("F1/val", val_metrics["f1"], epoch)
+        writer.add_scalar("LR", current_lr, epoch)
+
         print(
             f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
             f"Val Acc: {val_metrics['accuracy']:.4f} | Val F1: {val_metrics['f1']:.4f} | LR: {current_lr:.5f}"
@@ -407,6 +422,9 @@ def main():
             test_acc_metric.update(preds, targets)
     test_accuracy = float(test_acc_metric.compute())
     print(f"[Testing] Final Test Accuracy: {test_accuracy:.4f}")
+
+    writer.add_scalar("Accuracy/test", test_accuracy, args.epochs)
+    writer.close()
 
 
 if __name__ == "__main__":
