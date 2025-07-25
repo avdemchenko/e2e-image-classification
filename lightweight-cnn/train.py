@@ -18,6 +18,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
+from tqdm.auto import tqdm
 
 from torchmetrics.classification import (
     MulticlassAccuracy,
@@ -226,28 +227,39 @@ def save_checkpoint(state: Dict, ckpt_dir: Path, epoch: int) -> Path:
     return ckpt_path
 
 
-def train_one_epoch(model, loader, criterion, optimizer, device):
+def train_one_epoch(model, loader, criterion, optimizer, device, epoch_idx: int = None):
+    """Train for a single epoch with tqdm progress bar."""
     model.train()
     running_loss = 0.0
-    for inputs, targets in loader:
+    desc = f"Epoch {epoch_idx+1} [Train]" if epoch_idx is not None else "Train"
+    loop = tqdm(loader, desc=desc, leave=False)
+    for inputs, targets in loop:
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
         outputs = model(inputs)
         loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
+
         running_loss += loss.item() * inputs.size(0)
+        loop.set_postfix(loss=loss.item())
+
     epoch_loss = running_loss / len(loader.dataset)
     return epoch_loss
 
 
-def validate(model, loader, criterion, device, metrics):
+def validate(model, loader, criterion, device, metrics, epoch_idx: int = None):
+    """Validate model with tqdm progress bar."""
     model.eval()
     running_loss = 0.0
     for m in metrics.values():
         m.reset()
+
+    desc = f"Epoch {epoch_idx+1} [Val]" if epoch_idx is not None else "Val"
+    loop = tqdm(loader, desc=desc, leave=False)
+
     with torch.no_grad():
-        for inputs, targets in loader:
+        for inputs, targets in loop:
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
             loss = criterion(outputs, targets)
@@ -373,8 +385,8 @@ def main():
     # Step 6: Training Loop
     for epoch in range(start_epoch, args.epochs):
         print(f"\nEpoch {epoch+1}/{args.epochs}")
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_metrics = validate(model, val_loader, criterion, device, metrics)
+        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch)
+        val_loss, val_metrics = validate(model, val_loader, criterion, device, metrics, epoch)
         scheduler.step(val_loss)
         current_lr = optimizer.param_groups[0]["lr"]
 
