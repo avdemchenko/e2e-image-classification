@@ -190,13 +190,13 @@ The pipeline achieves competitive performance on CIFAR-10:
 | Model Size | Lightweight CNN |
 
 ### Tensorboard plots
-![tb_accuracy](results/tb_accuracy.png)
-![tb_f1](results/tb_f1.png)
-![tb_loss](results/tb_loss.png)
-![tb_lr](results/tb_lr.png)
+![tb_accuracy](train_results/tb_accuracy.png)
+![tb_f1](train_results/tb_f1.png)
+![tb_loss](train_results/tb_loss.png)
+![tb_lr](train_results/tb_lr.png)
 
 
 ### Native Matplotlib plots via visualize.py
-![loss_accuracy](results/loss_accuracy_plot.png)
-![lr_schedule](results/lr_schedule.png)
-![metrics_dashboard](results/metrics_dashboard.png)
+![loss_accuracy](train_results/loss_accuracy_plot.png)
+![lr_schedule](train_results/lr_schedule.png)
+![metrics_dashboard](train_results/metrics_dashboard.png)
