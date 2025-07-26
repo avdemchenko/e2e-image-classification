@@ -1,0 +1,14 @@
+lr: 0.001
+epochs: 25
+batch_size: 64
+seed: 42
+
+# Paths (relative to project root; Hydra will convert to absolute)
+raw_data_dir: ./data_raw
+processed_dir: ./my_cifar_data
+checkpoint_dir: ./checkpoints
+log_dir: ./runs
+
+scheduler:
+  factor: 0.1
+  patience: 2 
