@@ -1,5 +1,3 @@
-import argparse
-import os
 import random
 import tarfile
 import pickle
@@ -26,6 +24,11 @@ from torchmetrics.classification import (
     MulticlassRecall,
     MulticlassF1Score,
 )
+
+import argparse  # kept for legacy but not used when running with Hydra
+from omegaconf import DictConfig, OmegaConf
+import hydra
+from hydra.utils import to_absolute_path
 
 # --------------------------------------------------
 # Constants & URLs
@@ -304,10 +307,22 @@ def get_args():
 # Main Function
 # --------------------------------------------------
 
-def main():
-    args = get_args()
-    set_seed(args.seed)
-    writer = SummaryWriter(log_dir=args.log_dir)
+@hydra.main(version_base=None, config_path="../conf", config_name="config")
+def main(cfg: DictConfig):
+    # Optional: print resolved config
+    print(OmegaConf.to_yaml(cfg))
+
+    set_seed(cfg.seed)
+
+    # Ensure all paths are absolute (Hydra changes the working dir)
+    global RAW_DATA_DIR, EXTRACTED_DIR, PROCESSED_DIR, TRAIN_SUBDIR, TEST_SUBDIR
+    RAW_DATA_DIR = Path(to_absolute_path(cfg.raw_data_dir))
+    EXTRACTED_DIR = RAW_DATA_DIR / "cifar-10-batches-py"
+    PROCESSED_DIR = Path(to_absolute_path(cfg.processed_dir))
+    TRAIN_SUBDIR = PROCESSED_DIR / "train"
+    TEST_SUBDIR = PROCESSED_DIR / "test"
+
+    writer = SummaryWriter(log_dir=to_absolute_path(cfg.log_dir))
 
     # Step 1: Ensure data is present
     download_and_unpack_cifar10()
@@ -335,20 +350,25 @@ def main():
     train_dataset, val_dataset = random_split(
         full_train_dataset,
         [train_size, val_size],
-        generator=torch.Generator().manual_seed(args.seed),
+        generator=torch.Generator().manual_seed(cfg.seed),
     )
     test_dataset = CustomImageDataset(TEST_SUBDIR, transform=test_transform)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=False, num_workers=4)
 
     # Step 4: Model, Optimizer, Loss, Scheduler
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = Net().to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=2)
+    optimizer = optim.Adam(model.parameters(), lr=cfg.lr)
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=cfg.scheduler.factor,
+        patience=cfg.scheduler.patience,
+    )
 
     # Metrics
     metrics = {
@@ -359,7 +379,7 @@ def main():
     }
 
     # Step 5: Checkpoint Handling
-    ckpt_dir = Path(args.checkpoint_dir)
+    ckpt_dir = Path(to_absolute_path(cfg.checkpoint_dir))
     start_epoch = 0
     history = {
         "train_loss": [],
@@ -383,8 +403,8 @@ def main():
         print(f"[Checkpoint] Resumed from epoch {start_epoch}.")
 
     # Step 6: Training Loop
-    for epoch in range(start_epoch, args.epochs):
-        print(f"\nEpoch {epoch+1}/{args.epochs}")
+    for epoch in range(start_epoch, cfg.epochs):
+        print(f"\nEpoch {epoch+1}/{cfg.epochs}")
         train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch)
         val_loss, val_metrics = validate(model, val_loader, criterion, device, metrics, epoch)
         scheduler.step(val_loss)
@@ -435,7 +455,7 @@ def main():
     test_accuracy = float(test_acc_metric.compute())
     print(f"[Testing] Final Test Accuracy: {test_accuracy:.4f}")
 
-    writer.add_scalar("Accuracy/test", test_accuracy, args.epochs)
+    writer.add_scalar("Accuracy/test", test_accuracy, cfg.epochs)
     writer.close()
 
 
