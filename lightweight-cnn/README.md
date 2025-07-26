@@ -23,6 +23,9 @@ With the default configuration, this pipeline achieves:
 ├── train.py              # Main training script
 ├── visualize.py          # Visualization script for training history
 ├── requirements.txt      # Python dependencies
+├── environment.yml      # Conda environment definition
+├── Dockerfile           # Container build recipe
+├── .dockerignore        # Docker context exclusions
 ├── README.md            # This file
 ├── checkpoints/         # Saved model checkpoints (created during training)
 ├── plots/              # Generated visualization plots (created by visualize.py)
@@ -41,10 +44,43 @@ With the default configuration, this pipeline achieves:
 ## Installation
 
 1. Clone this repository
-2. Install dependencies:
+2. Install dependencies (pip):
 ```bash
 pip install -r requirements.txt
 ```
+3. (Alternative) Create and activate the Conda environment:
+```bash
+conda env create -f environment.yml
+conda activate lightweight-cnn
+```
+
+## Docker Support
+
+A Dockerfile is provided to encapsulate the entire training environment. Build the image:
+```bash
+docker build -t lightweight-cnn .
+```
+
+Run training inside the container (mount the current directory to preserve outputs):
+```bash
+docker run --rm -it -v $(pwd):/workspace lightweight-cnn python train.py
+```
+
+You can pass any command-line arguments to `train.py` as usual:
+```bash
+docker run --rm -it -v $(pwd):/workspace lightweight-cnn python train.py --epochs 200 --batch-size 64
+```
+
+The container uses the Conda environment defined in `environment.yml`, ensuring consistency between local Conda setups and Docker runs.
+
+### Quick reference
+
+| Scenario | Command |
+|----------|---------|
+| Local pip install | `pip install -r requirements.txt` |
+| Local Conda env | `conda env create -f environment.yml && conda activate lightweight-cnn` |
+| Build Docker image | `docker build -t lightweight-cnn .` |
+| Run training in Docker | `docker run --rm -it -v $(pwd):/workspace lightweight-cnn python train.py` |
 
 ## Usage
 
@@ -153,6 +189,14 @@ The pipeline achieves competitive performance on CIFAR-10:
 | Training Time | ~200 epochs |
 | Model Size | Lightweight CNN |
 
-![loss_accuracy](./plots/loss_accuracy_plot.png)
-![lr_schedule](./plots/lr_schedule.png)
-![metrics_dashboard](./plots/metrics_dashboard.png)
+### Tensorboard plots
+![tb_accuracy](results/tb_accuracy.png)
+![tb_f1](results/tb_f1.png)
+![tb_loss](results/tb_loss.png)
+![tb_lr](results/tb_lr.png)
+
+
+### Native Matplotlib plots via visualize.py
+![loss_accuracy](results/loss_accuracy_plot.png)
+![lr_schedule](results/lr_schedule.png)
+![metrics_dashboard](results/metrics_dashboard.png)

@@ -1,0 +1,16 @@
+name: lightweight-cnn
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytorch
+  - torchvision
+  - torchmetrics
+  - requests
+  - "numpy<2.0"
+  - matplotlib
+  - pillow
+  - tensorboard
+  - tqdm
+  - hydra-core 
