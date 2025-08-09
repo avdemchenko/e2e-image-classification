@@ -12,7 +12,7 @@ from PIL import Image
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms
 from torch.utils.tensorboard import SummaryWriter
@@ -30,9 +30,9 @@ from omegaconf import DictConfig, OmegaConf
 import hydra
 from hydra.utils import to_absolute_path
 
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 # Constants & URLs
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 CIFAR10_URL = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
 RAW_DATA_DIR = Path("./data_raw")
 EXTRACTED_DIR = RAW_DATA_DIR / "cifar-10-batches-py"
@@ -53,9 +53,9 @@ CIFAR10_LABELS = [
 ]
 
 
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 # Utility Functions
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 
 def set_seed(seed: int) -> None:
     """Set random seed for reproducibility."""
@@ -142,9 +142,9 @@ def create_image_file_structure() -> None:
     print("[Data] Image files created successfully.")
 
 
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 # Dataset
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 
 class CustomImageDataset(Dataset):
     """Custom dataset that recursively reads PNG images and returns tensors."""
@@ -179,33 +179,66 @@ class CustomImageDataset(Dataset):
         return image, label
 
 
-# --------------------------------------------------
-# Model
-# --------------------------------------------------
+# ---------------------------------------------------------------------
+# Improved Model with BatchNorm and Deeper Architecture
+# ---------------------------------------------------------------------
 
-class Net(nn.Module):
-    def __init__(self, num_classes: int = 10):
+class ImprovedNet(nn.Module):
+    def __init__(self, num_classes: int = 10, dropout: float = 0.5):
         super().__init__()
+
         self.features = nn.Sequential(
-            # Block 1: 3x32x32 -> 32x16x16
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            # Block 1: 3x32x32 -> 64x32x32 -> 64x16x16
+            nn.Conv2d(3, 64, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),
-            # Block 2: 32x16x16 -> 64x8x8
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.Dropout2d(0.1),
+
+            # Block 2: 64x16x16 -> 128x16x16 -> 128x8x8
+            nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 128, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),
-            # Block 3: 64x8x8 -> 128x4x4
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.Dropout2d(0.2),
+
+            # Block 3: 128x8x8 -> 256x8x8 -> 256x4x4
+            nn.Conv2d(128, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2, 2),
+            nn.Dropout2d(0.3),
+
+            # Block 4: 256x4x4 -> 512x4x4 -> 512x2x2
+            nn.Conv2d(256, 512, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(512),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 512, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(512),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),
         )
+
         self.classifier = nn.Sequential(
-            nn.Flatten(),  # 128*4*4 = 2048
-            nn.Linear(128 * 4 * 4, 256),
+            nn.AdaptiveAvgPool2d((1, 1)),  # Global Average Pooling
+            nn.Flatten(),
+            nn.Dropout(dropout),
+            nn.Linear(512, 256),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(256, num_classes),
+            nn.Dropout(dropout * 0.6),
+            nn.Linear(256, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout * 0.3),
+            nn.Linear(128, num_classes),
         )
 
     def forward(self, x):
@@ -213,9 +246,9 @@ class Net(nn.Module):
         return self.classifier(x)
 
 
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 # Training & Evaluation Utils
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 
 def get_latest_checkpoint(ckpt_dir: Path) -> Path:
     """Return path to the latest checkpoint in directory or None."""
@@ -242,6 +275,10 @@ def train_one_epoch(model, loader, criterion, optimizer, device, epoch_idx: int 
         outputs = model(inputs)
         loss = criterion(outputs, targets)
         loss.backward()
+
+        # Gradient clipping for stability
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
         optimizer.step()
 
         running_loss += loss.item() * inputs.size(0)
@@ -278,34 +315,34 @@ def validate(model, loader, criterion, device, metrics, epoch_idx: int = None):
     return val_loss, results
 
 
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 # Argument Parsing
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 
 def get_args():
     parser = argparse.ArgumentParser(description="CIFAR-10 Training Pipeline")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
-    parser.add_argument("--epochs", type=int, default=25, help="Number of epochs")
-    parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
+    parser.add_argument("--batch-size", type=int, default=128, help="Batch size")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument(
         "--checkpoint-dir",
         type=str,
-        default="./checkpoints",
+        default="./checkpoints_improved",
         help="Directory for saving checkpoints",
     )
     parser.add_argument(
         "--log-dir",
         type=str,
-        default="./runs",
+        default="./runs_improved",
         help="TensorBoard log directory",
     )
     return parser.parse_args()
 
 
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 # Main Function
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 
 @hydra.main(version_base=None, config_path="../conf", config_name="config")
 def main(cfg: DictConfig):
@@ -328,24 +365,29 @@ def main(cfg: DictConfig):
     download_and_unpack_cifar10()
     create_image_file_structure()
 
-    # Step 2: Transforms
+    # Step 2: Enhanced Transforms with more augmentations
     mean = (0.4914, 0.4822, 0.4465)
     std = (0.2023, 0.1994, 0.2010)
-    train_transform = transforms.Compose(
-        [
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ]
-    )
-    test_transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize(mean, std)]
-    )
 
-    # Step 3: Datasets & Dataloaders
+    # Enhanced training augmentations - ИСПРАВЛЕНО: RandomErasing после ToTensor
+    train_transform = transforms.Compose([
+        transforms.RandomCrop(32, padding=4, padding_mode='reflect'),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(15),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+        transforms.RandomErasing(p=0.1, scale=(0.02, 0.33), ratio=(0.3, 3.3)),
+    ])
+
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std)
+    ])
+
+    # Step 3: Datasets & Dataloaders with larger batch size
     full_train_dataset = CustomImageDataset(TRAIN_SUBDIR, transform=train_transform)
-    val_size = int(0.2 * len(full_train_dataset))
+    val_size = int(0.15 * len(full_train_dataset))  # Reduced validation size
     train_size = len(full_train_dataset) - val_size
     train_dataset, val_dataset = random_split(
         full_train_dataset,
@@ -354,20 +396,34 @@ def main(cfg: DictConfig):
     )
     test_dataset = CustomImageDataset(TEST_SUBDIR, transform=test_transform)
 
-    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=False, num_workers=4)
+    # Increased batch size for better gradient estimates
+    batch_size = getattr(cfg, 'batch_size', 128)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                             num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
+                           num_workers=4, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,
+                            num_workers=4, pin_memory=True)
 
-    # Step 4: Model, Optimizer, Loss, Scheduler
+    # Step 4: Improved Model, Optimizer, Loss, Scheduler
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Net().to(device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=cfg.lr)
-    scheduler = ReduceLROnPlateau(
-        optimizer,
-        mode="min",
-        factor=cfg.scheduler.factor,
-        patience=cfg.scheduler.patience,
+    model = ImprovedNet(dropout=0.5).to(device)
+
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"[Model] Total parameters: {total_params:,}")
+    print(f"[Model] Trainable parameters: {trainable_params:,}")
+
+    # Label smoothing for better generalization
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+
+    # AdamW with weight decay for better regularization
+    optimizer = optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=0.01)
+
+    # Cosine Annealing with Warm Restarts
+    scheduler = CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2, eta_min=1e-6
     )
 
     # Metrics
@@ -381,6 +437,7 @@ def main(cfg: DictConfig):
     # Step 5: Checkpoint Handling
     ckpt_dir = Path(to_absolute_path(cfg.checkpoint_dir))
     start_epoch = 0
+    best_val_acc = 0.0
     history = {
         "train_loss": [],
         "val_loss": [],
@@ -400,14 +457,18 @@ def main(cfg: DictConfig):
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
         history = checkpoint["history"]
-        print(f"[Checkpoint] Resumed from epoch {start_epoch}.")
+        best_val_acc = checkpoint.get("best_val_acc", 0.0)
+        print(f"[Checkpoint] Resumed from epoch {start_epoch}. Best val acc: {best_val_acc:.4f}")
 
     # Step 6: Training Loop
+    patience_counter = 0
+    max_patience = 20  # Early stopping patience
+
     for epoch in range(start_epoch, cfg.epochs):
         print(f"\nEpoch {epoch+1}/{cfg.epochs}")
         train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, epoch)
         val_loss, val_metrics = validate(model, val_loader, criterion, device, metrics, epoch)
-        scheduler.step(val_loss)
+        scheduler.step()  # For CosineAnnealingWarmRestarts, step after each epoch
         current_lr = optimizer.param_groups[0]["lr"]
 
         # Update history
@@ -428,8 +489,17 @@ def main(cfg: DictConfig):
 
         print(
             f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
-            f"Val Acc: {val_metrics['accuracy']:.4f} | Val F1: {val_metrics['f1']:.4f} | LR: {current_lr:.5f}"
+            f"Val Acc: {val_metrics['accuracy']:.4f} | Val F1: {val_metrics['f1']:.4f} | LR: {current_lr:.6f}"
         )
+
+        # Early stopping and best model saving
+        is_best = val_metrics["accuracy"] > best_val_acc
+        if is_best:
+            best_val_acc = val_metrics["accuracy"]
+            patience_counter = 0
+            print(f"[Best Model] New best validation accuracy: {best_val_acc:.4f}")
+        else:
+            patience_counter += 1
 
         # Save checkpoint
         ckpt = {
@@ -438,26 +508,68 @@ def main(cfg: DictConfig):
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "history": history,
+            "best_val_acc": best_val_acc,
         }
+
         save_path = save_checkpoint(ckpt, ckpt_dir, epoch)
+        if is_best:
+            # Save best model separately
+            best_path = ckpt_dir / "best_model.pth"
+            torch.save(ckpt, best_path)
+            print(f"[Best Model] Saved to {best_path}")
+
         print(f"[Checkpoint] Saved to {save_path}")
 
-    # Step 7: Final Test Evaluation
-    print("\n[Testing] Evaluating on test set…")
+        # Early stopping
+        if patience_counter >= max_patience:
+            print(f"[Early Stopping] No improvement for {max_patience} epochs. Stopping training.")
+            break
+
+    # Step 7: Final Test Evaluation with best model
+    print("\n[Testing] Loading best model for final evaluation…")
+    best_model_path = ckpt_dir / "best_model.pth"
+    if best_model_path.exists():
+        checkpoint = torch.load(best_model_path, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        print(f"[Testing] Loaded best model from epoch {checkpoint['epoch']+1}")
+
     model.eval()
     test_acc_metric = MulticlassAccuracy(num_classes=10).to(device)
+    test_f1_metric = MulticlassF1Score(num_classes=10, average="macro").to(device)
+
     with torch.no_grad():
-        for inputs, targets in test_loader:
+        for inputs, targets in tqdm(test_loader, desc="Testing"):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
             preds = torch.argmax(outputs, dim=1)
             test_acc_metric.update(preds, targets)
+            test_f1_metric.update(preds, targets)
+
     test_accuracy = float(test_acc_metric.compute())
+    test_f1 = float(test_f1_metric.compute())
+
     print(f"[Testing] Final Test Accuracy: {test_accuracy:.4f}")
+    print(f"[Testing] Final Test F1 Score: {test_f1:.4f}")
 
     writer.add_scalar("Accuracy/test", test_accuracy, cfg.epochs)
+    writer.add_scalar("F1/test", test_f1, cfg.epochs)
     writer.close()
+
+    print(f"\n[Summary] Best Validation Accuracy: {best_val_acc:.4f}")
+    print(f"[Summary] Final Test Accuracy: {test_accuracy:.4f}")
 
 
 if __name__ == "__main__":
-    main() 
+    # For standalone running without Hydra
+    args = get_args()
+    cfg = OmegaConf.create({
+        "lr": args.lr,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "seed": args.seed,
+        "raw_data_dir": "./data_raw",
+        "processed_dir": "./my_cifar_data",
+        "checkpoint_dir": args.checkpoint_dir,
+        "log_dir": args.log_dir,
+    })
+    main(cfg)
