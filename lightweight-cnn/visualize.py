@@ -1,4 +1,4 @@
-import argparse
+import click
 import os
 from pathlib import Path
 
@@ -6,21 +6,21 @@ import torch
 import matplotlib.pyplot as plt
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Visualize training history from checkpoint")
-    parser.add_argument(
-        "--checkpoint-file",
-        type=str,
-        required=True,
-        help="Path to checkpoint file containing training history",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="./plots",
-        help="Directory to save generated plots",
-    )
-    return parser.parse_args()
+@click.command()
+@click.option('--checkpoint-file', required=True, type=str, help='Path to checkpoint file containing training history')
+@click.option('--output-dir', default='./plots', type=str, help='Directory to save generated plots')
+def visualize_training(checkpoint_file, output_dir):
+    """Visualize training history from checkpoint"""
+    ckpt_path = Path(checkpoint_file)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint file {ckpt_path} not found.")
+
+    checkpoint = torch.load(ckpt_path, map_location="cpu")
+    history = checkpoint.get("history")
+    if history is None:
+        raise KeyError("History dictionary not found in checkpoint.")
+
+    plot_history(history, Path(output_dir))
 
 
 def plot_history(history: dict, output_dir: Path):
@@ -80,19 +80,5 @@ def plot_history(history: dict, output_dir: Path):
         plt.close()
 
 
-def main():
-    args = parse_args()
-    ckpt_path = Path(args.checkpoint_file)
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint file {ckpt_path} not found.")
-
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
-    history = checkpoint.get("history")
-    if history is None:
-        raise KeyError("History dictionary not found in checkpoint.")
-
-    plot_history(history, Path(args.output_dir))
-
-
 if __name__ == "__main__":
-    main() 
+    visualize_training() 

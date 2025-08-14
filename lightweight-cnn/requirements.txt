@@ -7,4 +7,5 @@ matplotlib
 Pillow 
 tensorboard 
 tqdm 
-hydra-core 
+hydra-core
+click 
